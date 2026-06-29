@@ -132,8 +132,7 @@ For detailed breakdown of technical competencies, see **[skills.md](./skills.md)
 ## 📫 Contact
 
 - **GitHub:** [@malikiy08](https://github.com/malikiy08)
-- **LinkedIn:** [Connect with me](https://linkedin.com/in/YOUR_LINKEDIN)
-- **Email:** your.email@example.com *(update with your professional email)*
+- **Email:** malikiy8@gmail.com
 
 ---
 
