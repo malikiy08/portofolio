@@ -1,0 +1,300 @@
+openapi: 3.0.3
+info:
+  title: Social & News Media Crawler API
+  description: |
+    RESTful API for intelligent social media crawler with ML integration and dual-database architecture.
+    
+    **SKKNI Senior Programmer Certification Portfolio**
+    
+    This API demonstrates:
+    - J.620100.013.02: Application Architecture Design
+    - J.620100.022.01: Security Implementation
+    - RESTful API best practices
+    
+  version: 1.0.0
+  contact:
+    name: Muhammad Yusuf Malik
+    email: your.email@example.com
+    url: https://github.com/malikiy08/portofolio
+
+servers:
+  - url: http://localhost:3000/api/v1
+    description: Development server
+  - url: https://api.example.com/v1
+    description: Production server
+
+tags:
+  - name: Crawl
+    description: Twitter crawling operations
+  - name: Health
+    description: Service health and status
+
+paths:
+  /crawl:
+    post:
+      tags:
+        - Crawl
+      summary: Trigger Twitter crawl
+      description: |
+        Initiates a Twitter crawl for a specific keyword.
+        
+        **Pipeline:**
+        1. Scrape tweets using Puppeteer
+        2. Process through ML API (sentiment + keywords)
+        3. Index to Elasticsearch (search)
+        4. Save to Neo4j (relationships)
+        
+      operationId: executeCrawl
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CrawlRequest'
+            examples:
+              nodejs:
+                summary: Search for Node.js tweets
+                value:
+                  keyword: "nodejs"
+                  limit: 10
+              javascript:
+                summary: Search for JavaScript tweets
+                value:
+                  keyword: "javascript"
+                  limit: 25
+      responses:
+        '200':
+          description: Crawl completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CrawlResponse'
+              example:
+                success: true
+                message: "Crawl completed successfully"
+                data:
+                  total: 10
+                  processed: 10
+                  failed: 0
+                  keyword: "nodejs"
+                  timestamp: "2023-06-15T10:30:00.000Z"
+        '400':
+          description: Bad request - Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                errors:
+                  - msg: "Keyword must be between 1 and 100 characters"
+                    param: "keyword"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "Internal server error"
+                message: "Crawler initialization failed"
+
+  /crawl/status:
+    get:
+      tags:
+        - Crawl
+      summary: Get crawl service status
+      description: Health check endpoint for crawl service
+      operationId: getCrawlStatus
+      responses:
+        '200':
+          description: Service is running
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Crawl service is running"
+                  timestamp:
+                    type: string
+                    format: date-time
+                    example: "2023-06-15T10:30:00.000Z"
+
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Application health check
+      description: Returns application health status and uptime
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Application is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "healthy"
+                  timestamp:
+                    type: string
+                    format: date-time
+                  uptime:
+                    type: number
+                    description: Server uptime in seconds
+                    example: 3600.5
+
+components:
+  schemas:
+    CrawlRequest:
+      type: object
+      required:
+        - keyword
+      properties:
+        keyword:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Search keyword for Twitter crawl
+          example: "nodejs"
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 10
+          description: Maximum number of tweets to crawl
+          example: 10
+
+    CrawlResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: "Crawl completed successfully"
+        data:
+          type: object
+          properties:
+            total:
+              type: integer
+              description: Total number of tweets scraped
+              example: 10
+            processed:
+              type: integer
+              description: Number of tweets successfully processed
+              example: 10
+            failed:
+              type: integer
+              description: Number of tweets that failed processing
+              example: 0
+            keyword:
+              type: string
+              description: Search keyword used
+              example: "nodejs"
+            timestamp:
+              type: string
+              format: date-time
+              description: Crawl completion timestamp
+              example: "2023-06-15T10:30:00.000Z"
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+          example: "Bad Request"
+        message:
+          type: string
+          example: "Invalid input parameters"
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              msg:
+                type: string
+              param:
+                type: string
+              location:
+                type: string
+
+    TweetData:
+      type: object
+      description: Tweet data structure stored in Elasticsearch
+      properties:
+        tweet_id:
+          type: string
+          example: "1234567890123456789"
+        text:
+          type: string
+          example: "I love building with Node.js! #nodejs #javascript"
+        author:
+          type: object
+          properties:
+            user_id:
+              type: string
+            username:
+              type: string
+            display_name:
+              type: string
+        timestamp:
+          type: string
+          format: date-time
+        sentiment:
+          type: object
+          properties:
+            label:
+              type: string
+              enum: [positive, negative, neutral]
+              example: "positive"
+            score:
+              type: number
+              format: float
+              example: 0.85
+            confidence:
+              type: number
+              format: float
+              example: 0.92
+        keywords:
+          type: array
+          items:
+            type: string
+          example: ["nodejs", "javascript", "programming"]
+        mentions:
+          type: array
+          items:
+            type: string
+          example: ["user_123", "user_456"]
+        reply_to_tweet_id:
+          type: string
+          nullable: true
+        retweet_of_tweet_id:
+          type: string
+          nullable: true
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: |
+        API key for authentication (future implementation)
+
+        SKKNI: J.620100.022.01 - Security Implementation
+
+# Security (future implementation)
+# security:
+#   - ApiKeyAuth: []
