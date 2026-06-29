@@ -42,17 +42,31 @@ class CrawlService {
       const rawTweets = await crawler.crawlByKeyword(keyword, limit);
       logger.info(`Scraped ${rawTweets.length} tweets`);
 
-      // Step 2: Process each tweet through the pipeline
+      // Step 2: Process tweets through ML and database pipeline with batch processing
       logger.info('Step 2: Processing tweets through ML and database pipeline...');
 
-      for (const rawTweet of rawTweets) {
-        try {
-          await this.processSingleTweet(rawTweet);
-          processedCount++;
-        } catch (error) {
-          logger.error(`Failed to process tweet ${rawTweet.tweet_id}:`, error);
-          failedCount++;
-        }
+      // SKKNI: J.620100.009.02 - Demonstrates performance optimization with batch processing
+      const BATCH_SIZE = 5; // Process 5 tweets concurrently
+
+      for (let i = 0; i < rawTweets.length; i += BATCH_SIZE) {
+        const batch = rawTweets.slice(i, i + BATCH_SIZE);
+        logger.debug(`Processing batch ${Math.floor(i / BATCH_SIZE) + 1}: ${batch.length} tweets`);
+
+        // Process batch concurrently
+        const results = await Promise.allSettled(
+          batch.map(tweet => this.processSingleTweet(tweet))
+        );
+
+        // Count results
+        results.forEach((result, index) => {
+          if (result.status === 'fulfilled') {
+            processedCount++;
+            logger.debug(`Tweet ${batch[index].tweet_id} processed successfully`);
+          } else {
+            failedCount++;
+            logger.error(`Failed to process tweet ${batch[index].tweet_id}:`, result.reason);
+          }
+        });
       }
 
       logger.info(`=== Crawl pipeline completed ===`);
@@ -76,13 +90,16 @@ class CrawlService {
   }
 
   /**
-   * Process a single tweet through the complete pipeline
-   * 
-   * SKKNI: Demonstrates async/await pattern and error handling
-   * 
+   * Process a single tweet through the complete pipeline with transaction support
+   *
+   * SKKNI: Demonstrates async/await pattern, error handling, and transaction management
+   *
    * @private
    */
   async processSingleTweet(rawTweet) {
+    let esIndexed = false;
+    let neo4jSaved = false;
+
     try {
       // Step 2a: ML Analysis
       const mlResults = await mlService.analyzeMetadata(rawTweet.text);
@@ -101,13 +118,30 @@ class CrawlService {
         indexed_at: new Date().toISOString()
       };
 
-      // Step 2c: Save to Elasticsearch
-      await elasticsearchClient.indexTweet(esDocument);
+      // Step 2c: Save to both databases with transaction-like behavior
+      // SKKNI: J.620100.017.02 - Demonstrates distributed transaction handling
+      try {
+        // Save to Elasticsearch first
+        await elasticsearchClient.indexTweet(esDocument);
+        esIndexed = true;
 
-      // Step 2d: Save to Neo4j (graph relationships)
-      await this.saveToNeo4j(rawTweet);
+        // Then save to Neo4j
+        await this.saveToNeo4j(rawTweet);
+        neo4jSaved = true;
 
-      logger.debug(`Tweet ${rawTweet.tweet_id} processed successfully`);
+        logger.debug(`Tweet ${rawTweet.tweet_id} processed successfully`);
+
+      } catch (dbError) {
+        // Rollback: If Neo4j fails but Elasticsearch succeeded, remove from ES
+        if (esIndexed && !neo4jSaved) {
+          logger.warn(`Rolling back Elasticsearch entry for tweet ${rawTweet.tweet_id}`);
+          await elasticsearchClient.deleteTweet(rawTweet.tweet_id)
+            .catch(rollbackError =>
+              logger.error('Rollback failed:', rollbackError)
+            );
+        }
+        throw dbError;
+      }
 
     } catch (error) {
       logger.error(`Error processing tweet ${rawTweet.tweet_id}:`, error);
@@ -170,21 +204,13 @@ class CrawlService {
         );
       }
 
-      // Create MENTIONS relationships
+      // Create MENTIONS relationships in batch (optimized)
+      // SKKNI: J.620100.009.02 - Demonstrates batch processing optimization
       if (tweet.mentions && tweet.mentions.length > 0) {
-        for (const mentionedUserId of tweet.mentions) {
-          // Create mentioned user if doesn't exist
-          await neo4jClient.createUser({
-            user_id: mentionedUserId,
-            username: `user_${mentionedUserId}`,
-            display_name: `User ${mentionedUserId}`
-          });
-
-          await neo4jClient.createMentionRelationship(
-            tweet.tweet_id,
-            mentionedUserId
-          );
-        }
+        await neo4jClient.createMentionsInBatch(
+          tweet.tweet_id,
+          tweet.mentions
+        );
       }
 
     } catch (error) {

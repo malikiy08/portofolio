@@ -197,10 +197,70 @@ class Neo4jClient {
   }
 
   /**
+   * Create multiple MENTIONS relationships in batch
+   * SKKNI: J.620100.009.02 - Demonstrates algorithm optimization
+   *
+   * @param {string} tweetId - Tweet ID
+   * @param {Array<string>} mentionedUserIds - Array of mentioned user IDs
+   */
+  async createMentionsInBatch(tweetId, mentionedUserIds) {
+    if (!mentionedUserIds || mentionedUserIds.length === 0) {
+      return;
+    }
+
+    const session = this.driver.session();
+    try {
+      await session.run(
+        `
+        MATCH (t:Tweet {id: $tweetId})
+        UNWIND $userIds AS userId
+        MERGE (u:User {id: userId})
+        SET u.username = 'user_' + userId,
+            u.display_name = 'User ' + userId
+        MERGE (t)-[r:MENTIONS]->(u)
+        SET r.created_at = datetime()
+        RETURN count(r) as mentionsCreated
+        `,
+        { tweetId, userIds: mentionedUserIds }
+      );
+
+      logger.debug(`Batch created ${mentionedUserIds.length} MENTIONS relationships for tweet ${tweetId}`);
+    } catch (error) {
+      logger.error('Error creating mentions in batch:', error);
+      throw error;
+    } finally {
+      await session.close();
+    }
+  }
+
+  /**
+   * Delete tweet and its relationships (for rollback)
+   * SKKNI: Demonstrates transaction rollback capability
+   */
+  async deleteTweet(tweetId) {
+    const session = this.driver.session();
+    try {
+      await session.run(
+        `
+        MATCH (t:Tweet {id: $tweetId})
+        DETACH DELETE t
+        `,
+        { tweetId }
+      );
+      logger.debug(`Tweet deleted from Neo4j: ${tweetId}`);
+    } catch (error) {
+      logger.error(`Error deleting tweet ${tweetId}:`, error);
+    } finally {
+      await session.close();
+    }
+  }
+
+  /**
    * Close driver connection
    */
   async close() {
     await this.driver.close();
+    logger.info('Neo4j driver closed');
   }
 }
 

@@ -19,6 +19,16 @@ const logger = require('./config/logger');
 const elasticsearchClient = require('./database/elasticsearch');
 const neo4jClient = require('./database/neo4j');
 
+// Import security middleware
+const {
+  helmetConfig,
+  corsConfig,
+  globalLimiter,
+  requestId,
+  requestLogger,
+  requestSizeLimit
+} = require('./middleware/security');
+
 // Import routes
 const crawlRoutes = require('./routes/crawl');
 const swaggerRoutes = require('./routes/swagger');
@@ -26,18 +36,16 @@ const swaggerRoutes = require('./routes/swagger');
 // Initialize Express application
 const app = express();
 
-// Middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Security Middleware (SKKNI: J.620100.022.01)
+app.use(helmetConfig);        // Security headers
+app.use(corsConfig);          // CORS configuration
+app.use(requestId);           // Request ID tracking
+app.use(requestLogger);       // Request logging
+app.use(globalLimiter);       // Global rate limiting
 
-// Request logging middleware
-app.use((req, res, next) => {
-  logger.info(`${req.method} ${req.path}`, {
-    ip: req.ip,
-    userAgent: req.get('user-agent')
-  });
-  next();
-});
+// Body parsing middleware with size limits
+app.use(express.json({ limit: requestSizeLimit }));
+app.use(express.urlencoded({ extended: true, limit: requestSizeLimit }));
 
 // Routes
 app.use('/api/v1', crawlRoutes);
@@ -82,12 +90,17 @@ app.use((req, res) => {
 
 // Global error handler
 app.use((err, req, res, next) => {
-  logger.error('Unhandled error:', err);
-  
+  logger.error('Unhandled error:', {
+    requestId: req.id,
+    error: err.message,
+    stack: config.server.env === 'development' ? err.stack : undefined
+  });
+
   res.status(err.status || 500).json({
     success: false,
     error: 'Internal Server Error',
-    message: config.server.env === 'development' ? err.message : 'An error occurred'
+    message: config.server.env === 'development' ? err.message : 'An error occurred',
+    requestId: req.id
   });
 });
 
@@ -129,18 +142,35 @@ async function startServer() {
     });
 
     // Graceful shutdown
-    process.on('SIGTERM', async () => {
-      logger.info('SIGTERM signal received: closing HTTP server');
+    const shutdown = async (signal) => {
+      logger.info(`${signal} signal received: initiating graceful shutdown`);
+
       server.close(async () => {
         logger.info('HTTP server closed');
-        
-        // Close database connections
-        await neo4jClient.close();
-        logger.info('Database connections closed');
-        
-        process.exit(0);
+
+        try {
+          // Close database connections
+          await Promise.all([
+            elasticsearchClient.disconnect(),
+            neo4jClient.close()
+          ]);
+          logger.info('All database connections closed');
+          process.exit(0);
+        } catch (error) {
+          logger.error('Error during shutdown:', error);
+          process.exit(1);
+        }
       });
-    });
+
+      // Force shutdown after 30 seconds
+      setTimeout(() => {
+        logger.error('Forced shutdown after timeout');
+        process.exit(1);
+      }, 30000);
+    };
+
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGINT', () => shutdown('SIGINT'));
 
   } catch (error) {
     logger.error('Failed to start server:', error);

@@ -1,6 +1,6 @@
 /**
  * Crawl API Routes
- * 
+ *
  * SKKNI Competency: J.620100.013.02 - Merancang Arsitektur Aplikasi
  * Demonstrates RESTful API design and request validation
  */
@@ -9,24 +9,26 @@ const express = require('express');
 const { body, validationResult } = require('express-validator');
 const crawlService = require('../services/crawlService');
 const logger = require('../config/logger');
+const { crawlLimiter } = require('../middleware/security');
 
 const router = express.Router();
 
 /**
  * POST /api/v1/crawl
- * 
+ *
  * Main endpoint to trigger Twitter crawl
- * 
+ *
  * Request Body:
  * {
  *   "keyword": "nodejs",
  *   "limit": 10
  * }
- * 
- * SKKNI: Demonstrates input validation and security best practices
+ *
+ * SKKNI: J.620100.022.01 - Demonstrates input validation, rate limiting, and security
  */
 router.post(
   '/crawl',
+  crawlLimiter, // Apply crawl-specific rate limiting
   [
     // Input validation
     body('keyword')
@@ -54,7 +56,12 @@ router.post(
 
       const { keyword, limit = 10 } = req.body;
 
-      logger.info(`Crawl request received: keyword="${keyword}", limit=${limit}`);
+      logger.info('Crawl request received', {
+        requestId: req.id,
+        keyword,
+        limit,
+        ip: req.ip
+      });
 
       // Execute crawl pipeline
       const result = await crawlService.executeCrawl(keyword, limit);
@@ -63,16 +70,22 @@ router.post(
       res.status(200).json({
         success: true,
         message: 'Crawl completed successfully',
-        data: result
+        data: result,
+        requestId: req.id
       });
 
     } catch (error) {
-      logger.error('Crawl endpoint error:', error);
-      
+      logger.error('Crawl endpoint error', {
+        requestId: req.id,
+        error: error.message,
+        stack: error.stack
+      });
+
       res.status(500).json({
         success: false,
         error: 'Internal server error',
-        message: error.message
+        message: error.message,
+        requestId: req.id
       });
     }
   }

@@ -11,13 +11,53 @@ const logger = require('../config/logger');
 
 class ElasticsearchClient {
   constructor() {
-    this.client = new Client({
-      node: config.elasticsearch.node,
-      auth: {
-        username: config.elasticsearch.auth.username,
-        password: config.elasticsearch.auth.password
+    this.client = null;
+    this.isConnected = false;
+  }
+
+  /**
+   * Connect to Elasticsearch with retry logic
+   * SKKNI: J.620100.017.02 - Demonstrates robust connection management
+   */
+  async connect() {
+    if (this.isConnected) {
+      return;
+    }
+
+    const maxRetries = 3;
+    let retries = 0;
+
+    while (retries < maxRetries) {
+      try {
+        this.client = new Client({
+          node: config.elasticsearch.node,
+          auth: {
+            username: config.elasticsearch.auth.username,
+            password: config.elasticsearch.auth.password
+          },
+          maxRetries: 5,
+          requestTimeout: 30000,
+          sniffOnStart: true
+        });
+
+        // Health check
+        await this.client.ping();
+        this.isConnected = true;
+        logger.info('Elasticsearch connected successfully');
+        return;
+      } catch (error) {
+        retries++;
+        logger.warn(`Elasticsearch connection attempt ${retries}/${maxRetries} failed:`, error.message);
+
+        if (retries >= maxRetries) {
+          logger.error('Elasticsearch connection failed after maximum retries');
+          throw error;
+        }
+
+        // Exponential backoff
+        await this.delay(Math.pow(2, retries) * 1000);
       }
-    });
+    }
   }
 
   /**
@@ -26,6 +66,8 @@ class ElasticsearchClient {
    */
   async initialize() {
     try {
+      await this.connect();
+
       const indexExists = await this.client.indices.exists({
         index: config.elasticsearch.index.tweets
       });
@@ -155,6 +197,44 @@ class ElasticsearchClient {
       logger.error('Search error:', error);
       throw error;
     }
+  }
+
+  /**
+   * Delete a tweet (for rollback scenarios)
+   * SKKNI: Demonstrates transaction rollback capability
+   */
+  async deleteTweet(tweetId) {
+    try {
+      await this.client.delete({
+        index: config.elasticsearch.index.tweets,
+        id: tweetId
+      });
+      logger.debug(`Tweet deleted from Elasticsearch: ${tweetId}`);
+    } catch (error) {
+      if (error.meta?.statusCode !== 404) {
+        logger.error(`Error deleting tweet ${tweetId}:`, error);
+        throw error;
+      }
+    }
+  }
+
+  /**
+   * Disconnect from Elasticsearch
+   */
+  async disconnect() {
+    if (this.client) {
+      await this.client.close();
+      this.isConnected = false;
+      logger.info('Elasticsearch disconnected');
+    }
+  }
+
+  /**
+   * Utility: Delay helper
+   * @private
+   */
+  delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
 
