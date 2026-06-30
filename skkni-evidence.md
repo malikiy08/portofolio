@@ -1,9 +1,5 @@
 # SKKNI Evidence Mapping - Senior Programmer
 
-> **Candidate:** Muhammad Yusuf Malik  
-> **Certification Scheme:** SKKNI Senior Programmer  
-> **Date Prepared:** December 2024
-
 This document maps SKKNI competency units to specific project evidence in this portfolio, demonstrating proficiency at the Senior Programmer level.
 
 ---
